@@ -1,0 +1,98 @@
+name: Auto-Assign Reviewers
+
+on:
+  pull_request:
+    types: [opened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  assign_reviewers:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Assign reviewers from CODEOWNERS
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            const CODEOWNERS_PATH = path.join('.github', 'CODEOWNERS');
+            const codeownersContent = fs.readFileSync(CODEOWNERS_PATH, 'utf8');
+            const prNumber = context.payload.pull_request.number;
+
+            const rules = codeownersContent
+              .split('\n')
+              .filter(line => line.trim() && !line.startsWith('#'))
+              .map(line => {
+                const [pattern, ...owners] = line.trim().split(/\s+/);
+                return { pattern, owners };
+              });
+
+            const { data: filesChanged } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+
+            const changedPaths = filesChanged.map(f => f.filename);
+            const matchedOwners = new Set();
+
+            for (const filePath of changedPaths) {
+              for (const { pattern, owners } of rules) {
+                if (
+                  pattern === '*' ||
+                  filePath === pattern ||
+                  filePath.startsWith(pattern.replace(/\*$/, '')) ||
+                  (pattern.endsWith('.md') && filePath.endsWith('.md'))
+                ) {
+                  owners.forEach(o => matchedOwners.add(o));
+                }
+              }
+            }
+
+            const reviewers = [];
+            const team_reviewers = [];
+
+            for (const owner of matchedOwners) {
+              const cleaned = owner.startsWith('@') ? owner.slice(1) : owner;
+              if (cleaned.includes('/')) {
+                team_reviewers.push(cleaned.split('/')[1]);
+              } else {
+                reviewers.push(cleaned);
+              }
+            }
+
+            const { data: current } = await github.rest.pulls.listRequestedReviewers({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+
+            const alreadyAssigned = new Set([
+              ...current.users.map(u => u.login),
+              ...current.teams.map(t => t.slug)
+            ]);
+
+            const reviewersToAssign = reviewers.filter(r => !alreadyAssigned.has(r));
+            const teamsToAssign = team_reviewers.filter(t => !alreadyAssigned.has(t));
+
+            if (reviewersToAssign.length > 0 || teamsToAssign.length > 0) {
+              await github.rest.pulls.requestReviewers({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber,
+                reviewers: reviewersToAssign,
+                team_reviewers: teamsToAssign
+              });
+
+              console.log(`Assigned reviewers: ${reviewersToAssign.join(', ')}`);
+              console.log(`Assigned teams: ${teamsToAssign.join(', ')}`);
+            } else {
+              console.log('No new reviewers to assign.');
+            }

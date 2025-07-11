@@ -1,0 +1,5 @@
+# Assign the 'revs' team to review any file in the repo
+* @test-gh-org-afzal/revs
+
+# Assign only for a specific folder
+/src/ @test-gh-org-afzal/revs
