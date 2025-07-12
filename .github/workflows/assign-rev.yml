@@ -88,7 +88,7 @@ jobs:
                 repo: context.repo.repo,
                 pull_number: prNumber,
                 reviewers: reviewersToAssign,
-                team_reviewers: ['revs']
+                team_reviewers: teamsToAssign
               });
 
               console.log(`Assigned reviewers: ${reviewersToAssign.join(', ')}`);
